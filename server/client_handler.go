@@ -9,8 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
+	"github.com/Sirupsen/logrus"
 )
 
 type clientHandler struct {
@@ -30,7 +29,7 @@ type clientHandler struct {
 	debug       bool                 // Show debugging info on the server side
 	transfer    transferHandler      // Transfer connection (only passive is implemented at this stage)
 	transferTLS bool                 // Use TLS for transfer connection
-	logger      log.Logger           // Client handler logging
+	logger      *logrus.Logger       // Client handler logging
 }
 
 // newClientHandler initializes a client handler when someone connects
@@ -44,7 +43,7 @@ func (server *FtpServer) newClientHandler(connection net.Conn, id uint32) *clien
 		reader:      bufio.NewReader(connection),
 		connectedAt: time.Now().UTC(),
 		path:        "/",
-		logger:      log.With(server.Logger, "clientId", id),
+		logger:      server.Logger,
 	}
 
 	// Just respecting the existing logic here, this could be probably be dropped at some point
@@ -113,7 +112,7 @@ func (c *clientHandler) HandleCommands() {
 	for {
 		if c.reader == nil {
 			if c.debug {
-				level.Debug(c.logger).Log(logKeyMsg, "Clean disconnect", logKeyAction, "ftp.disconnect", "clean", true)
+				c.logger.Debug("Clean Disconnect")
 			}
 			return
 		}
@@ -132,31 +131,31 @@ func (c *clientHandler) HandleCommands() {
 				if err.Timeout() {
 					// We have to extend the deadline now
 					c.conn.SetDeadline(time.Now().Add(time.Minute))
-					level.Info(c.logger).Log(logKeyMsg, "IDLE timeout", logKeyAction, "ftp.idle_timeout", "err", err)
+					c.logger.Info("client timeout")
 					c.writeMessage(421, fmt.Sprintf("command timeout (%d seconds): closing control connection", c.daddy.settings.IdleTimeout))
 					if err := c.writer.Flush(); err != nil {
-						level.Error(c.logger).Log(logKeyMsg, "Network flush error", logKeyAction, "ftp.flush_error", "err", err)
+						c.logger.WithField("error", err).Error("Network flush error")
 					}
 					if err := c.conn.Close(); err != nil {
-						level.Error(c.logger).Log(logKeyMsg, "Network close error", logKeyAction, "ftp.close_error", "err", err)
+						c.logger.WithField("error", err).Error("Network close error")
 					}
 					break
 				}
-				level.Error(c.logger).Log(logKeyMsg, "Network error", logKeyAction, "ftp.net_error", "err", err)
+				c.logger.WithField("error", err).Error("Network error")
 			default:
 				if err == io.EOF {
 					if c.debug {
-						level.Debug(c.logger).Log(logKeyMsg, "TCP disconnect", logKeyAction, "ftp.disconnect", "clean", false)
+						c.logger.Info("TCP Disconnect")
 					}
 				} else {
-					level.Error(c.logger).Log(logKeyMsg, "Read error", logKeyAction, "ftp.read_error", "err", err)
+					c.logger.WithField("error", err).Errorf("Read Error")
 				}
 			}
 			return
 		}
 
 		if c.debug {
-			level.Debug(c.logger).Log(logKeyMsg, "FTP RECV", logKeyAction, "ftp.cmd_recv", "line", line)
+			c.logger.WithField("line", line).Debug("FTP RECV")
 		}
 
 		c.handleCommand(line)
@@ -191,7 +190,7 @@ func (c *clientHandler) handleCommand(line string) {
 
 func (c *clientHandler) writeLine(line string) {
 	if c.debug {
-		level.Debug(c.logger).Log(logKeyMsg, "FTP SEND", logKeyAction, "ftp.cmd_send", "line", line)
+		c.logger.WithField("line", line).Debug("FTP SEND")
 	}
 	c.writer.Write([]byte(line))
 	c.writer.Write([]byte("\r\n"))
@@ -210,7 +209,7 @@ func (c *clientHandler) TransferOpen() (net.Conn, error) {
 	c.writeMessage(150, "Using transfer connection")
 	conn, err := c.transfer.Open()
 	if err == nil && c.debug {
-		level.Debug(c.logger).Log(logKeyMsg, "FTP Transfer connection opened", logKeyAction, "ftp.transfer_open", "remoteAddr", conn.RemoteAddr().String(), "localAddr", conn.LocalAddr().String())
+		c.logger.WithFields(logrus.Fields{"remoteAddr": conn.RemoteAddr().String(), "localAddr": conn.LocalAddr().String()}).Debug("FTP Transfer connection opened")
 	}
 	return conn, err
 }
@@ -221,7 +220,7 @@ func (c *clientHandler) TransferClose() {
 		c.transfer.Close()
 		c.transfer = nil
 		if c.debug {
-			level.Debug(c.logger).Log(logKeyMsg, "FTP Transfer connection closed", logKeyAction, "ftp.transfer_close")
+			c.logger.Debug("FTP Transfer connection closed")
 		}
 	}
 }

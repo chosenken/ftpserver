@@ -7,8 +7,6 @@ import (
 	"net"
 	"strings"
 	"time"
-
-	"github.com/go-kit/kit/log/level"
 )
 
 // Active/Passive transfer connection handler
@@ -54,7 +52,7 @@ func (c *clientHandler) handlePASV() {
 	}
 
 	if err != nil {
-		level.Error(c.logger).Log(logKeyMsg, "Could not listen", "err", err)
+		c.logger.WithField("error", err).Errorf("Could not listen")
 		return
 	}
 

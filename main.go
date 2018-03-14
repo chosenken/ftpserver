@@ -2,87 +2,57 @@
 package main
 
 import (
-	"flag"
-	"io/ioutil"
+	"context"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/fclairamb/ftpserver/sample"
-	"github.com/fclairamb/ftpserver/server"
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
+	"net/http"
+
+	"time"
+
+	"github.com/Sirupsen/logrus"
+	"github.com/chosenken/ftpserver/db"
+	"github.com/chosenken/ftpserver/driver"
+	"github.com/chosenken/ftpserver/server"
+	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
 )
 
 var (
 	ftpServer *server.FtpServer
+	svc       *http.Server
+	logger    *logrus.Logger
 )
 
 func main() {
-	// Arguments vars
-	var confFile, dataDir string
-	var onlyConf bool
+	logger = logrus.New()
+	logger.Level = logrus.DebugLevel
 
-	// Parsing arguments
-	flag.StringVar(&confFile, "conf", "", "Configuration file")
-	flag.StringVar(&dataDir, "data", "", "Data directory")
-	flag.BoolVar(&onlyConf, "conf-only", false, "Only create the config")
-	flag.Parse()
+	viper.AutomaticEnv()
+	viper.SetDefault("db_path", "/mnt/users.db")
+	viper.SetDefault("http_port", "8080")
 
-	// Setting up the logger
-	logger := log.With(
-		log.NewLogfmtLogger(log.NewSyncWriter(os.Stdout)),
-		"ts", log.DefaultTimestampUTC,
-		"caller", log.DefaultCaller,
-	)
-
-	autoCreate := onlyConf
-
-	// The general idea here is that if you start it without any arg, you're probably doing a local quick&dirty run
-	// possibly on a windows machine, so we're better of just using a default file name and create the file.
-	if confFile == "" {
-		confFile = "settings.toml"
-		autoCreate = true
-	}
-
-	if autoCreate {
-		if _, err := os.Stat(confFile); err != nil && os.IsNotExist(err) {
-			level.Info(logger).Log("msg", "Not config file, creating one", "action", "conf_file.create", "confFile", confFile)
-
-			if err := ioutil.WriteFile(confFile, confFileContent(), 0644); err != nil {
-				level.Error(logger).Log("msg", "Couldn't create config file", "action", "conf_file.could_not_create", "confFile", confFile)
-			}
-		}
+	dbClient, err := db.NewClient(viper.GetString("db_path"), logger)
+	if err != nil {
+		logger.Error(err)
+		os.Exit(1)
 	}
 
 	// Loading the driver
-	driver, err := sample.NewSampleDriver(dataDir, confFile)
-
-	if err != nil {
-		level.Error(logger).Log("msg", "Could not load the driver", "err", err)
-		return
-	}
-
-	// Overriding the driver default silent logger by a sub-logger (component: driver)
-	driver.Logger = log.With(logger, "component", "driver")
+	drivr := driver.NewDriver(logger, dbClient)
 
 	// Instantiating the server by passing our driver implementation
-	ftpServer = server.NewFtpServer(driver)
+	ftpServer = server.NewFtpServer(drivr, logger)
 
-	// Overriding the server default silent logger by a sub-logger (component: server)
-	ftpServer.Logger = log.With(logger, "component", "server")
+	logger.Debug("Before http server")
+	httpServer(dbClient)
 
 	// Preparing the SIGTERM handling
 	go signalHandler()
-
-	// Blocking call, behaving similarly to the http.ListenAndServe
-	if onlyConf {
-		level.Error(logger).Log("msg", "Only creating conf")
-		return
-	}
-
+	logger.Debug("Before ftp server")
 	if err := ftpServer.ListenAndServe(); err != nil {
-		level.Error(logger).Log("msg", "Problem listening", "err", err)
+		logger.WithField("error", err).Error("Error listening")
 	}
 }
 
@@ -93,56 +63,81 @@ func signalHandler() {
 		switch <-ch {
 		case syscall.SIGTERM:
 			ftpServer.Stop()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := svc.Shutdown(ctx); err != nil {
+				logger.Fatal("Server Shutdown:", err)
+			}
 			break
 		}
 	}
 }
 
-func confFileContent() []byte {
-	str := `# ftpserver configuration file
-#
-# These are all the config parameters with their default values. If not present,
+func httpServer(dbc *db.Client) {
+	router := gin.Default()
+	router.GET("/user", func(c *gin.Context) {
+		userName := c.Query("username")
+		if userName == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": "parameter username is required"})
+			return
+		}
+		user, err := dbc.GetUser(userName)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, user)
+	})
 
-# Max number of control connections to accept
-# max_connections = 0
-max_connections = 10
+	router.DELETE("/user", func(c *gin.Context) {
+		userName := c.Query("username")
+		if userName == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": "parameter password is required"})
+			return
+		}
+		err := dbc.DeleteUser(userName)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
+		c.Status(http.StatusOK)
+	})
 
-[server]
-# Address to listen on
-# listen_host = "0.0.0.0"
+	router.POST("/user", func(c *gin.Context) {
+		userName := c.Query("username")
+		if userName == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": "parameter username is required"})
+			return
+		}
+		password := c.Query("password")
+		if password == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": "parameter password is required"})
+			return
+		}
+		dir := c.Query("dir")
+		if dir == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": "parameter dir is required"})
+			return
+		}
+		err := dbc.PutUser(&db.User{
+			Dir:      dir,
+			Password: password,
+			Username: userName,
+		})
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
+		c.Status(http.StatusOK)
+	})
 
-# Port to listen on
-# listen_port = 2121
-
-# Public host to expose in the passive connection
-# public_host = ""
-
-# Idle timeout time
-# idle_timeout = 900
-
-# Data port range from 10000 to 15000
-# [dataPortRange]
-# start = 2122
-# end = 2200
-
-[server.dataPortRange]
-start = 2122
-end = 2200
-
-[[users]]
-user="fclairamb"
-pass="floflo"
-dir="shared"
-
-[[users]]
-user="test"
-pass="test"
-dir="shared"
-
-[[users]]
-user="mcardon"
-pass="marmar"
-dir="marie"
-`
-	return []byte(str)
+	svc = &http.Server{
+		Addr:    ":" + viper.GetString("http_port"),
+		Handler: router,
+	}
+	go func() {
+		if err := svc.ListenAndServe(); err != nil {
+			logger.Fatalf("listen: %s\n", err)
+		}
+	}()
 }

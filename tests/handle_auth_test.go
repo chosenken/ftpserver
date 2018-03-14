@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"testing"
 
-	"gopkg.in/dutchcoders/goftp.v1"
+	"github.com/secsy/goftp"
 )
 
 func TestLoginSuccess(t *testing.T) {

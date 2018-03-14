@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"gopkg.in/dutchcoders/goftp.v1"
+	"github.com/secsy/goftp"
 )
 
 func TestConcurrency(t *testing.T) {

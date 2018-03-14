@@ -21,7 +21,7 @@ import (
 	"encoding/pem"
 	"math/big"
 
-	"github.com/fclairamb/ftpserver/server"
+	"github.com/chosenken/ftpserver/server"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/naoina/toml"
@@ -110,11 +110,9 @@ func (driver *MainDriver) GetTLSConfig() (*tls.Config, error) {
 // This implementation of the driver doesn't load a certificate from a file on purpose. But it any proper implementation
 // should most probably load the certificate from a file using tls.LoadX509KeyPair("cert_pub.pem", "cert_priv.pem").
 func (driver *MainDriver) getCertificate() (*tls.Certificate, error) {
-	level.Info(driver.Logger).Log("msg", "Creating certificate")
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 
 	if err != nil {
-		level.Error(driver.Logger).Log("msg", "Could not generate key", "err", err)
 		return nil, err
 	}
 
@@ -140,7 +138,7 @@ func (driver *MainDriver) getCertificate() (*tls.Certificate, error) {
 	derBytes, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
 
 	if err != nil {
-		level.Error(driver.Logger).Log("msg", "Could not create cert", "err", err)
+
 		return nil, err
 	}
 

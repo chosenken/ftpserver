@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/fclairamb/ftpserver/server"
-	"gopkg.in/dutchcoders/goftp.v1"
+	"github.com/secsy/goftp"
 )
 
 // TestDirAccess relies on LIST of files listing
