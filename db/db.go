@@ -11,6 +11,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/coreos/bbolt"
 	"github.com/pkg/errors"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var (
@@ -73,7 +74,14 @@ func (c *Client) GetUser(userName string) (*User, error) {
 func (c *Client) PutUser(user *User) error {
 	logger := c.logger.WithFields(logrus.Fields{"function": "PutUser", "userName": user.Username, "dir": user.Dir})
 	logger.Info("Saving user")
-	err := c.db.Update(func(tx *bolt.Tx) error {
+	// Set the password to the hash
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return errors.Wrap(err, "Error hashing password")
+	}
+	user.Password = string(hashedPassword[:])
+	// Update the record
+	err = c.db.Update(func(tx *bolt.Tx) error {
 		users, err := tx.CreateBucketIfNotExists(bucket)
 		if err != nil {
 			return errors.Wrap(err, "error creating bucket")
@@ -101,6 +109,25 @@ func (c *Client) DeleteUser(userName string) error {
 		return errors.Wrap(err, "Error deleting user")
 	}
 	return nil
+}
+
+func (c *Client) GetUsers() ([]*User, error) {
+	logger := c.logger.WithField("function", "GetUsers")
+	logger.Info("Getting user list")
+	users := make([]*User, 0)
+	err := c.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			user, err := Decode(v)
+			if err != nil {
+				return errors.Wrap(err, "Error decoding user")
+			}
+			users = append(users, user)
+		}
+		return nil
+	})
+	return users, err
 }
 
 func (p *User) Encode() ([]byte, error) {

@@ -27,6 +27,7 @@ import (
 	"github.com/chosenken/ftpserver/db"
 	"github.com/chosenken/ftpserver/server"
 	"github.com/spf13/viper"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type MainDriver struct {
@@ -167,13 +168,12 @@ func (driver *MainDriver) AuthUser(cc server.ClientContext, userName, pass strin
 	if err != nil {
 		logger.WithField("error", err).Error("Error getting user")
 	}
-	if user.Password == pass {
-		baseDir := filepath.Join(driver.BaseDir, user.Dir)
-		os.MkdirAll(baseDir, 0766)
-		return &ClientDriver{BaseDir: baseDir, Logger: driver.logger}, nil
+	if err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pass)); err != nil {
+		return nil, fmt.Errorf("could not authenticate you")
 	}
-
-	return nil, fmt.Errorf("could not authenticate you")
+	baseDir := filepath.Join(driver.BaseDir, user.Dir)
+	os.MkdirAll(baseDir, 0766)
+	return &ClientDriver{BaseDir: baseDir, Logger: driver.logger}, nil
 }
 
 // UserLeft is called when the user disconnects, even if he never authenticated

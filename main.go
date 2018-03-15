@@ -131,6 +131,15 @@ func httpServer(dbc *db.Client) {
 		c.Status(http.StatusOK)
 	})
 
+	router.GET("/users", func(c *gin.Context) {
+		users, err := dbc.GetUsers()
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, users)
+	})
+
 	svc = &http.Server{
 		Addr:    ":" + viper.GetString("http_port"),
 		Handler: router,
