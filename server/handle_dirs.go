@@ -148,7 +148,7 @@ func (c *clientHandler) dirTransferLIST(w io.Writer, files []os.FileInfo) error 
 // fclairamb (2018-02-13): #64: Removed extra empty line
 func (c *clientHandler) dirTransferMLSD(w io.Writer, files []os.FileInfo) error {
 	if len(files) == 0 {
-		// Send an empty line?
+		// Send an empty line for empty dir
 		fmt.Fprint(w, "\n")
 	} else {
 		for _, file := range files {
