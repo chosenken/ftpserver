@@ -168,6 +168,9 @@ func (driver *MainDriver) AuthUser(cc server.ClientContext, userName, pass strin
 	if err != nil {
 		logger.WithField("error", err).Error("Error getting user")
 	}
+	if user == nil {
+		return nil, fmt.Errorf("could not athenticate you")
+	}
 	if err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pass)); err != nil {
 		return nil, fmt.Errorf("could not authenticate you")
 	}
